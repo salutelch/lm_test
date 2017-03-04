@@ -7,6 +7,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/epoll.h>
+#include <sys/stat.h>
 #include <map>
 #include <list>
 #include <iostream>
@@ -58,6 +59,7 @@ user_t* ctrl_find_user(string ip)
 void ctrl_init()
 {
     ips = get_ip_addrs();
+    srand(time(NULL));
 
     // create epoll
     epollfd = epoll_create(512);
@@ -131,6 +133,47 @@ void ctrl_handle_ui()
         json.add(LM_FROM_NAME,myname);
 
         ctrl_send(json,CTRL_OTHER_PORT,toip);
+    }
+    else if(cmd == LM_FT)
+    {
+        ctrl_send(json,FT_CTRL_PORT,"127.0.0.1");
+    }
+    else if(cmd == LM_SENDFILE)
+    {
+        string toip = json.value(LM_RECV);
+        string path = json.value(LM_FILEPATH);
+
+        struct stat stat_buf;
+        stat(path.c_str(),&stat_buf);
+
+        int token = rand();
+        Json task_json;
+        task_json.add(LM_CMD,LM_FT);
+        task_json.add(LM_FILEPATH,path);
+        task_json.add(LM_FILELEN,(const char*)(int)stat_buf.st_size);
+        task_json.add(LM_RECV,toip);
+        task_json.add(LM_TOKEN,(const char*)token);
+
+        if(toip == "255.255.255.255")
+        {
+            task_json.add(LM_REF,(const char*)users.size());
+        }
+        else
+        {
+            task_json.add(LM_REF,(const char*)1);
+        }
+
+        ctrl_send(task_json,FT_CTRL_PORT,"127.0.0.1");
+
+        usleep(1000);
+
+        // tell get file user
+        Json notify_json;
+        notify_json.add(LM_CMD,LM_FT);
+        notify_json.add(LM_TOKEN,(const char*)token);
+        notify_json.add(LM_FILELEN,(const char*)(int)stat_buf.st_size);
+        notify_json.add(LM_FROM_NAME,myname);
+        ctrl_send(notify_json,CTRL_OTHER_PORT,toip);
     }
 }
 void ctrl_handle_ft(){}

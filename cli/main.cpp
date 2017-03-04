@@ -160,6 +160,17 @@ void ui_handle_msg_from_ctrl()
 
         printf("%s(%s) say:%s\n",fromname.c_str(),fromip.c_str(),msg.c_str());
     }
+    else if(cmd == LM_FT)
+    {
+        printf("%s send file to me, filelen=%s\n",
+               json.value(LM_FROM_NAME).c_str(),
+               json.value(LM_FILELEN).c_str());
+
+        json.add(LM_ACK,LM_YES);
+        json.add(LM_LOCAL_PATH,"/home/saul/myfile/lmtest/test.file");
+
+        ui_send_ctrl(json);
+    }
 }
 
 void ui_handle_msg_from_ft()
@@ -189,8 +200,33 @@ void ui_run()
     }
 }
 
-int main()
+int main(int argc,char* argv[])
 {
+    if(argc!=3)
+    {
+        printf("argument err\n");
+        return -1;
+    }
+
+    char* ctrl_path = argv[1];
+    char* ft_path = argv[2];
+    pid_t pid;
+    pid = fork();
+    if(pid == 0)
+    {
+        execl(ctrl_path,ctrl_path,NULL);
+        printf("start ctrl err\n");
+        return -2;
+    }
+
+    pid = fork();
+    if(pid == 0)
+    {
+        execl(ft_path,ft_path,NULL);
+        printf("start ft err\n");
+        return -2;
+    }
+
     ui_init();
     ui_run();
 
