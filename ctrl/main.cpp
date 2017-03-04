@@ -2,10 +2,14 @@
 #include <stdio.h>
 #include "../lm_def.h"
 #include "../Json.h"
+#include "../sock.h"
+#include "../lm_util.h"
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/epoll.h>
-#include<iostream>
+#include <map>
+#include <list>
+#include <iostream>
 using namespace std;
 
 int epollfd;
@@ -13,6 +17,16 @@ int ctrl_ui;
 int ctrl_ft;
 int ctrl_other;
 string myname;
+
+list<string> ips;
+
+typedef struct user_t
+{
+    string name;
+    string ip;
+}user_t;
+
+static map<string,user_t*> users;
 
 int ctrl_creat_socket(uint16_t port)
 {
@@ -25,8 +39,26 @@ int ctrl_creat_socket(uint16_t port)
     return fd;
 }
 
+void ctrl_add_user(string ip,string name)
+{
+    user_t* user = new user_t;
+    user->ip= ip;
+    user->name = name;
+    users[ip] = user;
+}
+
+user_t* ctrl_find_user(string ip)
+{
+    auto it = users.find(ip);
+    if(it == users.end())
+        return NULL;
+    return it->second;
+}
+
 void ctrl_init()
 {
+    ips = get_ip_addrs();
+
     // create epoll
     epollfd = epoll_create(512);
 
@@ -50,13 +82,13 @@ void ctrl_init()
     epoll_ctl(epollfd, EPOLL_CTL_ADD, ctrl_other, &ev);
 }
 
-void ctrl_broadcast(Json& json)
+void ctrl_send(Json& json,uint16_t port, string ip = "255.255.255.255")
 {
     string buf = json.print();
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(CTRL_OTHER_PORT);
-    addr.sin_addr.s_addr = inet_addr("255.255.255.255"); // guangbo
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = inet_addr(ip.c_str()); // guangbo
 
     // send everyone
     sendto(ctrl_other,buf.c_str(),buf.size(),0,(struct sockaddr*)&addr,sizeof(addr));
@@ -79,16 +111,96 @@ void ctrl_handle_ui()
 
         // save the name
         // broadcast my name
-        ctrl_broadcast(json);
+        ctrl_send(json,CTRL_OTHER_PORT);
+    }
+    else if(cmd == LM_LIST)
+    {
+        for(map<string,user_t*>::iterator it = users.begin();it!=users.end();++it)
+        {
+            user_t* user = it->second;
+            Json resp;
+            resp.add(LM_CMD,LM_LIST_ACK);
+            resp.add(LM_IP,user->ip);
+            resp.add(LM_NAME,user->name);
+            ctrl_send(resp,UI_CTRL_PORT,"127.0.0.1");
+        }
+    }
+    else if(cmd == LM_TO)
+    {
+        string toip = json.value(LM_RECV);
+        json.add(LM_FROM_NAME,myname);
+
+        ctrl_send(json,CTRL_OTHER_PORT,toip);
     }
 }
 void ctrl_handle_ft(){}
 void ctrl_handle_other()
 {
+    struct sockaddr_in addr;
+    socklen_t socklen = sizeof(addr);
     char buf[2048];
-    recv(ctrl_other,buf,sizeof(buf),0);
+    recvfrom(ctrl_other,buf,sizeof(buf),0,(struct sockaddr*)&addr,&socklen);
+    string ip = inet_ntoa(addr.sin_addr);
+    printf("ip=%s\n",ip.c_str());
 
-    printf("recv from other:%s\n",buf);
+    // if is me, return
+    if(find(ips.begin(),ips.end(),ip)!=ips.end())
+        return;
+
+    Json json;
+    json.parse(buf);
+
+    // get cmd
+    string cmd = json.value(LM_CMD);
+    if(cmd == LM_TO)
+    {
+        string msg = json.value(LM_MSG);
+        string by = json.value(LM_FROM_NAME);
+
+        Json tocli;
+        tocli.add(LM_CMD,LM_MSG);
+        tocli.add(LM_FROM_NAME,by);
+        tocli.add(LM_FROM_IP,ip);
+        tocli.add(LM_MSG,msg);
+
+        ctrl_send(tocli,UI_CTRL_PORT,"127.0.0.1");
+    }
+    else if(cmd == LM_SETNAME)
+    {
+        // have new user
+        string name = json.value(LM_NAME);
+
+        user_t* user = ctrl_find_user(ip);
+        if(user == NULL)
+        {
+            // add user
+            ctrl_add_user(ip,name);
+
+            // write me to him
+            Json json_resp;
+            json_resp.add(LM_CMD,LM_SETNAME_ACK);
+            json_resp.add(LM_NAME,myname);
+            ctrl_send(json_resp,CTRL_OTHER_PORT,ip);
+        }
+        else
+        {
+            user->name = name;
+        }
+    }
+    else if(cmd == LM_SETNAME_ACK)
+    {
+        string name = json.value(LM_NAME);
+
+        user_t* user = ctrl_find_user(ip);
+        if(user == NULL)
+        {
+            ctrl_add_user(ip,name);
+        }
+        else
+        {
+            user->name=name;
+        }
+    }
 }
 
 void ctrl_run()

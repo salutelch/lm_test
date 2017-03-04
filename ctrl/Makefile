@@ -1,6 +1,7 @@
 
 target := ctrl.bin
 CC := g++
+CPPFLAGS += -std=c++11
 
 srcs := $(shell find -name "*.cpp")
 objs := $(srcs:.cpp=.o)

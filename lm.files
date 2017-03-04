@@ -6,3 +6,5 @@ cJSON.h
 Json.cpp
 Json.h
 lm_def.h
+sock.h
+lm_util.h

@@ -1,5 +1,5 @@
 
-target := cli.bin
+target := ft.bin
 CC := g++
 
 srcs := $(shell find -name "*.cpp")
